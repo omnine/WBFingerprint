@@ -116,7 +116,97 @@ HRESULT CaptureSample()
 
   if(FAILED(hr))
   {
-    std::cout << "WinBioOpenSession failed. hr = 0x" << std::hex << hr << std::dec << "\n";
+    std::cout << "WinBioOpenSession failed. hr = 0x" << std::hex << hr << std::dec;
+    
+    // Provide more specific error information
+    switch(hr)
+    {
+      case 0x8009802c: // WINBIO_E_ENROLLMENT_IN_PROGRESS
+        std::cout << " (WINBIO_E_ENROLLMENT_IN_PROGRESS - Another biometric operation is in progress)\n";
+        std::cout << "Try closing Windows Hello setup, biometric settings, or other fingerprint applications.\n";
+        break;
+      case 0x80090300: // WINBIO_E_UNKNOWN_ID
+        std::cout << " (WINBIO_E_UNKNOWN_ID)\n";
+        break;
+      case 0x80090301: // WINBIO_E_CANCELED
+        std::cout << " (WINBIO_E_CANCELED)\n";
+        break;
+      case 0x80090302: // WINBIO_E_NO_MATCH
+        std::cout << " (WINBIO_E_NO_MATCH)\n";
+        break;
+      case 0x80090303: // WINBIO_E_TIMEOUT
+        std::cout << " (WINBIO_E_TIMEOUT)\n";
+        break;
+      case 0x80090304: // WINBIO_E_BAD_CAPTURE
+        std::cout << " (WINBIO_E_BAD_CAPTURE)\n";
+        break;
+      case 0x80090305: // WINBIO_E_INVALID_CONTROL_CODE
+        std::cout << " (WINBIO_E_INVALID_CONTROL_CODE)\n";
+        break;
+      case 0x80090306: // WINBIO_E_DATA_COLLECTION_IN_PROGRESS
+        std::cout << " (WINBIO_E_DATA_COLLECTION_IN_PROGRESS)\n";
+        break;
+      case 0x80090307: // WINBIO_E_UNSUPPORTED_DATA_FORMAT
+        std::cout << " (WINBIO_E_UNSUPPORTED_DATA_FORMAT)\n";
+        break;
+      case 0x80090308: // WINBIO_E_UNSUPPORTED_DATA_TYPE
+        std::cout << " (WINBIO_E_UNSUPPORTED_DATA_TYPE)\n";
+        break;
+      case 0x80090309: // WINBIO_E_UNSUPPORTED_PURPOSE
+        std::cout << " (WINBIO_E_UNSUPPORTED_PURPOSE)\n";
+        break;
+      case 0x8009030A: // WINBIO_E_INVALID_DEVICE_STATE
+        std::cout << " (WINBIO_E_INVALID_DEVICE_STATE)\n";
+        break;
+      case 0x8009030B: // WINBIO_E_DEVICE_BUSY
+        std::cout << " (WINBIO_E_DEVICE_BUSY - Device is currently busy)\n";
+        break;
+      case 0x8009030C: // WINBIO_E_DATABASE_CANT_CREATE
+        std::cout << " (WINBIO_E_DATABASE_CANT_CREATE)\n";
+        break;
+      case 0x8009030D: // WINBIO_E_DATABASE_CANT_OPEN
+        std::cout << " (WINBIO_E_DATABASE_CANT_OPEN)\n";
+        break;
+      case 0x8009030E: // WINBIO_E_DATABASE_CANT_CLOSE
+        std::cout << " (WINBIO_E_DATABASE_CANT_CLOSE)\n";
+        break;
+      case 0x8009030F: // WINBIO_E_DATABASE_CANT_ERASE
+        std::cout << " (WINBIO_E_DATABASE_CANT_ERASE)\n";
+        break;
+      case 0x80090310: // WINBIO_E_DATABASE_CANT_FIND
+        std::cout << " (WINBIO_E_DATABASE_CANT_FIND)\n";
+        break;
+      case 0x80090311: // WINBIO_E_DATABASE_ALREADY_EXISTS
+        std::cout << " (WINBIO_E_DATABASE_ALREADY_EXISTS)\n";
+        break;
+      case 0x80090312: // WINBIO_E_DATABASE_FULL
+        std::cout << " (WINBIO_E_DATABASE_FULL)\n";
+        break;
+      case 0x80090313: // WINBIO_E_DATABASE_LOCKED
+        std::cout << " (WINBIO_E_DATABASE_LOCKED)\n";
+        break;
+      case 0x80090314: // WINBIO_E_DATABASE_CORRUPTED
+        std::cout << " (WINBIO_E_DATABASE_CORRUPTED)\n";
+        break;
+      case 0x80090315: // WINBIO_E_DATABASE_NO_SUCH_RECORD
+        std::cout << " (WINBIO_E_DATABASE_NO_SUCH_RECORD)\n";
+        break;
+      case 0x80090316: // WINBIO_E_DUPLICATE_TEMPLATE
+        std::cout << " (WINBIO_E_DUPLICATE_TEMPLATE)\n";
+        break;
+      case 0x80090317: // WINBIO_E_INVALID_OPERATION
+        std::cout << " (WINBIO_E_INVALID_OPERATION)\n";
+        break;
+      case 0x80090318: // WINBIO_E_SESSION_BUSY
+        std::cout << " (WINBIO_E_SESSION_BUSY)\n";
+        break;
+      case 0x80070005: // E_ACCESSDENIED
+        std::cout << " (E_ACCESSDENIED - Run as Administrator)\n";
+        break;
+      default:
+        std::cout << " (Unknown error)\n";
+        break;
+    }
 
     if(sample != NULL)
     {
@@ -303,5 +393,51 @@ HRESULT CaptureSample()
 int main()
 {
   CreateDirectoryA("data", NULL);
-  while(!FAILED(CaptureSample()));
+  
+  std::cout << "Starting fingerprint capture program...\n";
+  std::cout << "Make sure to:\n";
+  std::cout << "1. Run as Administrator\n";
+  std::cout << "2. Close Windows Settings if biometric settings are open\n";
+  std::cout << "3. Close any other fingerprint applications\n";
+  std::cout << "Press Enter to continue...";
+  std::cin.get();
+  
+  int attempts = 0;
+  const int maxAttempts = 5;
+  
+  while(attempts < maxAttempts)
+  {
+    std::cout << "\nAttempt " << (attempts + 1) << " of " << maxAttempts << "...\n";
+    HRESULT hr = CaptureSample();
+    
+    if(SUCCEEDED(hr))
+    {
+      std::cout << "Capture successful!\n";
+      break;
+    }
+    else if(hr == 0x8009802c) // WINBIO_E_ENROLLMENT_IN_PROGRESS
+    {
+      std::cout << "Device busy. Waiting 3 seconds before retry...\n";
+      Sleep(3000);
+      attempts++;
+    }
+    else
+    {
+      std::cout << "Failed with different error. Stopping.\n";
+      break;
+    }
+  }
+  
+  if(attempts >= maxAttempts)
+  {
+    std::cout << "Max attempts reached. Please try:\n";
+    std::cout << "- Restarting the Windows Biometric Service\n";
+    std::cout << "- Rebooting your computer\n";
+    std::cout << "- Running as Administrator\n";
+  }
+
+  std::cout << "\nPress any key to exit...";
+  std::cin.get();
+  
+  return 0;
 }
