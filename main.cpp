@@ -173,14 +173,99 @@ HRESULT CaptureSample()
 
   if(sample != NULL)
   {
+    // Debug: Print structure offsets and sizes
+    std::cout << "=== Debug Information ===\n";
+    std::cout << "Sample size: " << sampleSize << " bytes\n";
+    std::cout << "HeaderBlock.Offset: " << sample->HeaderBlock.Offset << "\n";
+    std::cout << "HeaderBlock.Size: " << sample->HeaderBlock.Size << "\n";
+    std::cout << "StandardDataBlock.Offset: " << sample->StandardDataBlock.Offset << "\n";
+    std::cout << "StandardDataBlock.Size: " << sample->StandardDataBlock.Size << "\n";
+    std::cout << "sizeof(WINBIO_BDB_ANSI_381_HEADER): " << sizeof(WINBIO_BDB_ANSI_381_HEADER) << "\n";
+    std::cout << "sizeof(WINBIO_BDB_ANSI_381_RECORD): " << sizeof(WINBIO_BDB_ANSI_381_RECORD) << "\n";
+
     PWINBIO_BIR_HEADER BirHeader = (PWINBIO_BIR_HEADER)(((PBYTE)sample) + sample->HeaderBlock.Offset);
     PWINBIO_BDB_ANSI_381_HEADER AnsiBdbHeader = (PWINBIO_BDB_ANSI_381_HEADER)(((PBYTE)sample) + sample->StandardDataBlock.Offset);
     PWINBIO_BDB_ANSI_381_RECORD AnsiBdbRecord = (PWINBIO_BDB_ANSI_381_RECORD)(((PBYTE)AnsiBdbHeader) + sizeof(WINBIO_BDB_ANSI_381_HEADER));
 
+    // Debug: Print raw bytes around the record
+    std::cout << "Raw bytes at AnsiBdbRecord location (first 32 bytes): ";
+    PBYTE rawBytes = (PBYTE)AnsiBdbRecord;
+    for(int i = 0; i < 32 && i < (int)(sampleSize - ((PBYTE)AnsiBdbRecord - (PBYTE)sample)); i++) {
+        std::cout << std::hex << std::setfill('0') << std::setw(2) << (int)rawBytes[i] << " ";
+    }
+    std::cout << std::dec << "\n";
+
+    // Debug: Print ANSI header info (basic structure info)
+    std::cout << "ANSI Header location: " << (void*)AnsiBdbHeader << "\n";
+    std::cout << "ANSI Record location: " << (void*)AnsiBdbRecord << "\n";
+    
+    // Alternative: Try manual parsing of dimensions
+    // Skip the header and look for dimension data manually
+    PBYTE dataStart = (PBYTE)sample + sample->StandardDataBlock.Offset;
+    
+    // Common fingerprint dimensions to try
+    uint32 possibleDimensions[] = {256, 300, 320, 360, 400, 500, 512};
+    uint32 estimatedPixels = sampleSize - sample->StandardDataBlock.Offset - 100; // Rough estimate
+    
+    std::cout << "Estimated pixel data size: " << estimatedPixels << "\n";
+    std::cout << "Possible dimensions based on data size:\n";
+    
+    for(uint32 w : possibleDimensions) {
+        for(uint32 h : possibleDimensions) {
+            if(w * h == estimatedPixels || abs((int)(w * h - estimatedPixels)) < 1000) {
+                std::cout << "  Possible: " << w << "x" << h << " (diff: " << abs((int)(w * h - estimatedPixels)) << ")\n";
+            }
+        }
+    }
+
     DWORD width = AnsiBdbRecord->HorizontalLineLength; // Width of image in pixels
     DWORD height = AnsiBdbRecord->VerticalLineLength; // Height of image in pixels
 
-    std::cout << "Image resolution: " << width << " x " << height << "\n";
+    // If dimensions are 0, try to guess from data size
+    if(width == 0 || height == 0) {
+        std::cout << "Dimensions are 0, attempting to estimate...\n";
+        
+        // Common fingerprint scanner resolution
+        uint32 totalPixels = estimatedPixels;
+        
+        // Try common aspect ratios
+        for(double ratio = 0.8; ratio <= 1.5; ratio += 0.1) {
+            uint32 testWidth = (uint32)sqrt(totalPixels * ratio);
+            uint32 testHeight = totalPixels / testWidth;
+            
+            if(testWidth * testHeight == totalPixels) {
+                std::cout << "Potential dimensions: " << testWidth << "x" << testHeight << " (ratio: " << ratio << ")\n";
+                if(width == 0) width = testWidth;
+                if(height == 0) height = testHeight;
+                break;
+            }
+        }
+        
+        // Fallback to square or common sizes
+        if(width == 0 || height == 0) {
+            if(totalPixels == 256*360) { width = 256; height = 360; }
+            else if(totalPixels == 300*300) { width = 300; height = 300; }
+            else if(totalPixels == 256*256) { width = 256; height = 256; }
+            else {
+                width = (uint32)sqrt(totalPixels);
+                height = totalPixels / width;
+            }
+        }
+    }
+
+    std::cout << "=== Original Values ===\n";
+    std::cout << "HorizontalLineLength (raw): 0x" << std::hex << width << std::dec << " (" << width << ")\n";
+    std::cout << "VerticalLineLength (raw): 0x" << std::hex << height << std::dec << " (" << height << ")\n";
+
+    // Try reading as different endianness
+    uint16* widthPtr = (uint16*)&AnsiBdbRecord->HorizontalLineLength;
+    uint16* heightPtr = (uint16*)&AnsiBdbRecord->VerticalLineLength;
+    uint16 widthSwapped = (((*widthPtr) & 0xFF) << 8) | (((*widthPtr) >> 8) & 0xFF);
+    uint16 heightSwapped = (((*heightPtr) & 0xFF) << 8) | (((*heightPtr) >> 8) & 0xFF);
+    
+    std::cout << "Width (byte-swapped): " << widthSwapped << "\n";
+    std::cout << "Height (byte-swapped): " << heightSwapped << "\n";
+    std::cout << "=========================\n";
 
     PBYTE firstPixel = (PBYTE)((PBYTE)AnsiBdbRecord) + sizeof(WINBIO_BDB_ANSI_381_RECORD);
 

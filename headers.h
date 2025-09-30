@@ -12,6 +12,8 @@
 #include <vector>
 #include <string>
 #include <cstdint>
+#include <iomanip>
+#include <cmath>
 #include <windows.h>
 #include <winbio.h>
 
