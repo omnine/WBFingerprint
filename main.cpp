@@ -289,6 +289,46 @@ HRESULT CaptureSample()
       std::cout << "Identity: Other type\n";
     }
     std::cout << "Sub-factor (finger position): " << (int)identifySubFactor << "\n";
+    
+    // Test verification immediately against the identified fingerprint
+    std::cout << "Testing verification against the identified fingerprint...\n";
+    std::cout << "Please place the same finger on sensor again for verification...\n";
+    
+    BOOLEAN verifyMatch = FALSE;
+    WINBIO_REJECT_DETAIL verifyRejectDetail = 0;
+    WINBIO_UNIT_ID verifyUnitId = 0;
+    
+    HRESULT verifyHr = WinBioVerify(
+      sessionHandle,
+      &identifyIdentity,
+      identifySubFactor,
+      &verifyUnitId,
+      &verifyMatch,
+      &verifyRejectDetail
+      );
+
+    if (SUCCEEDED(verifyHr))
+    {
+      std::cout << "Verification successful! Match: " << (verifyMatch ? "YES" : "NO") << "\n";
+      if (verifyMatch)
+      {
+        std::cout << "Fingerprint successfully verified against the identified enrollment!\n";
+        std::cout << "Verification completed on unit ID: " << verifyUnitId << "\n";
+      }
+      else
+      {
+        std::cout << "Fingerprint did not match the identified enrollment.\n";
+      }
+    }
+    else
+    {
+      if (verifyHr == WINBIO_E_BAD_CAPTURE)
+        std::cout << "Bad capture during verification; reason: " << verifyRejectDetail << "\n";
+      else
+        std::cout << "WinBioVerify failed. hr = 0x" << std::hex << verifyHr << std::dec << "\n";
+      
+      std::cout << "Verification failed, but continuing...\n";
+    }
   }
   else
   {
@@ -308,7 +348,7 @@ HRESULT CaptureSample()
   // Begin enrollment
   hr = WinBioEnrollBegin(
     sessionHandle,
-    WINBIO_ANSI_381_POS_RH_MIDDLE_FINGER,  // Sub-factor (finger position)
+    WINBIO_ANSI_381_POS_RH_INDEX_FINGER,  // Sub-factor (finger position)
     unitId
     );
 
@@ -414,7 +454,7 @@ HRESULT CaptureSample()
   hr = WinBioVerify(
     sessionHandle,
     &identity,
-    WINBIO_ANSI_381_POS_RH_MIDDLE_FINGER,
+    WINBIO_ANSI_381_POS_RH_INDEX_FINGER,
     &verifyUnitId,
     &match,
     &verifyRejectDetail
