@@ -262,7 +262,7 @@ HRESULT CaptureSample()
   hr = WinBioOpenSession(
     WINBIO_TYPE_FINGERPRINT,    // Service provider
     WINBIO_POOL_SYSTEM,         // Pool type - try system first
-    WINBIO_FLAG_BASIC,          // Access: Most basic flag
+    WINBIO_FLAG_DEFAULT,          // Access: Most basic flag
     NULL,                       // Array of biometric unit IDs
     0,                          // Count of biometric unit IDs
     NULL,                       // Database ID - NULL for automatic
@@ -302,7 +302,7 @@ HRESULT CaptureSample()
       hr = WinBioOpenSession(
         WINBIO_TYPE_FINGERPRINT,    // Service provider
         WINBIO_POOL_SYSTEM,         // Pool type
-        WINBIO_FLAG_BASIC,          // Access: Basic
+        WINBIO_FLAG_DEFAULT,          // Access: Basic
         unitArray,                  // Array of biometric unit IDs
         unitCount,                  // Count of biometric unit IDs
         NULL,                       // Database ID
