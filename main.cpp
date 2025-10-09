@@ -319,34 +319,76 @@ HRESULT CaptureSample()
 
   std::cout << "Basic session opened successfully!\n";
 
-  // Now try a simple identify operation instead of enrollment
-  WINBIO_IDENTITY identity = {};
-  WINBIO_BIOMETRIC_SUBTYPE subFactor = 0;
-  BOOLEAN isMatch = FALSE;
+
+
+    // Locate a sensor.
+    std::cout << "Locate a sensor by swiping your finger on it...\n";
+    hr = WinBioLocateSensor( sessionHandle, &unitId);
+    if (FAILED(hr))
+    {
+        std::cout << "WinBioLocateSensor failed. hr = 0x" << std::hex << hr << std::dec << "\n";
+        goto TryRawCapture;
+    }
+
+
+  // Now try enrollment operations
+  std::cout << "Starting enrollment process...\n";
   
-  std::cout << "Please place finger on sensor for identification...\n";
-  
-  hr = WinBioIdentify(
+  // Begin enrollment
+  hr = WinBioEnrollBegin(
     sessionHandle,
-    &unitId,
-    &identity,
-    &subFactor,
+    WINBIO_ANSI_381_POS_RH_MIDDLE_FINGER,  // Sub-factor (finger position)
+    unitId
+    );
+
+  if(FAILED(hr))
+  {
+    std::cout << "WinBioEnrollBegin failed. hr = 0x" << std::hex << hr << std::dec << "\n";
+    
+    if(sessionHandle != NULL)
+    {
+      WinBioCloseSession(sessionHandle);
+      sessionHandle = NULL;
+    }
+    
+    // Fall back to raw capture method
+    std::cout << "Falling back to raw capture method...\n";
+    goto TryRawCapture;
+  }
+
+  std::cout << "Enrollment begun successfully. Please place finger on sensor...\n";
+
+  // Capture enrollment sample
+  hr = WinBioEnrollCapture(
+    sessionHandle,
     &rejectDetail
     );
 
-  if(SUCCEEDED(hr))
-  {
-    std::cout << "Fingerprint identification successful on unit " << unitId << "!\n";
-  }
-  else
+  if(FAILED(hr))
   {
     if(hr == WINBIO_E_BAD_CAPTURE)
-      std::cout << "Bad capture during identification; reason: " << rejectDetail << "\n";
-    else if(hr == WINBIO_E_NO_MATCH)
-      std::cout << "No match found (this is expected for new fingerprints)\n";
+      std::cout << "Bad capture during enrollment; reason: " << rejectDetail << "\n";
     else
-      std::cout << "WinBioIdentify failed. hr = 0x" << std::hex << hr << std::dec << "\n";
+      std::cout << "WinBioEnrollCapture failed. hr = 0x" << std::hex << hr << std::dec << "\n";
+
+    // Cancel enrollment on failure
+    WinBioEnrollDiscard(sessionHandle);
+
+    if(sessionHandle != NULL)
+    {
+      WinBioCloseSession(sessionHandle);
+      sessionHandle = NULL;
+    }
+
+    // Fall back to raw capture method
+    std::cout << "Falling back to raw capture method...\n";
+    goto TryRawCapture;
   }
+
+  std::cout << "Enrollment capture successful!\n";
+
+  // Discard the enrollment (we don't want to actually save it)
+  WinBioEnrollDiscard(sessionHandle);
 
   if(sessionHandle != NULL)
   {
@@ -354,9 +396,8 @@ HRESULT CaptureSample()
     sessionHandle = NULL;
   }
 
-  // Now try to get raw data for image extraction
-  std::cout << "Attempting to capture raw fingerprint data for image...\n";
-  goto TryRawCapture;
+  std::cout << "Fingerprint capture completed successfully using enrollment method.\n";
+  return S_OK;
 
 TryRawCapture:
   // Original raw capture method as fallback
