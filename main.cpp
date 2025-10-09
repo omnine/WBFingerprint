@@ -309,7 +309,7 @@ HRESULT CaptureSample()
   std::cout << "Enrollment capture successful!\n";
 
   // Commit the enrollment to get the template
-WINBIO_IDENTITY identity = {0};
+  WINBIO_IDENTITY identity = {0};
   BOOLEAN isNewTemplate = TRUE;
   
   // Initialize identity for anonymous enrollment
@@ -354,6 +354,45 @@ WINBIO_IDENTITY identity = {0};
   }
 
   std::cout << "Enrollment committed successfully! New template: " << (isNewTemplate ? "Yes" : "No") << "\n";
+
+  // Test verification with the enrolled identity
+  std::cout << "Testing verification - please place the same finger on sensor again...\n";
+  
+  BOOLEAN match = FALSE;
+  WINBIO_REJECT_DETAIL verifyRejectDetail = 0;
+  WINBIO_UNIT_ID verifyUnitId = 0;
+  
+  hr = WinBioVerify(
+    sessionHandle,
+    &identity,
+    WINBIO_ANSI_381_POS_RH_MIDDLE_FINGER,
+    &verifyUnitId,
+    &match,
+    &verifyRejectDetail
+    );
+
+  if (SUCCEEDED(hr))
+  {
+    std::cout << "Verification successful! Match: " << (match ? "YES" : "NO") << "\n";
+    if (match)
+    {
+      std::cout << "Fingerprint successfully verified against the enrolled identity!\n";
+      std::cout << "Verification completed on unit ID: " << verifyUnitId << "\n";
+    }
+    else
+    {
+      std::cout << "Fingerprint did not match the enrolled identity.\n";
+    }
+  }
+  else
+  {
+    if (hr == WINBIO_E_BAD_CAPTURE)
+      std::cout << "Bad capture during verification; reason: " << verifyRejectDetail << "\n";
+    else
+      std::cout << "WinBioVerify failed. hr = 0x" << std::hex << hr << std::dec << "\n";
+    
+    std::cout << "Verification failed, but enrollment was successful.\n";
+  }
 
   // Discard the enrollment (we don't want to actually save it)
   WinBioEnrollDiscard(sessionHandle);
