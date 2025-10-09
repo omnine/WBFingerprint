@@ -253,6 +253,54 @@ HRESULT CaptureSample()
         return hr;
     }
 
+  std::cout << "Sensor located successfully on unit ID: " << unitId << "\n";
+
+  // Test identification to see if any enrolled fingerprints match
+  std::cout << "Testing identification - please place finger on sensor...\n";
+  
+  WINBIO_IDENTITY identifyIdentity = {0};
+  WINBIO_BIOMETRIC_SUBTYPE identifySubFactor = 0;
+  WINBIO_REJECT_DETAIL identifyRejectDetail = 0;
+  WINBIO_UNIT_ID identifyUnitId = 0;
+  
+  hr = WinBioIdentify(
+    sessionHandle,
+    &identifyUnitId,
+    &identifyIdentity,
+    &identifySubFactor,
+    &identifyRejectDetail
+    );
+
+  if (SUCCEEDED(hr))
+  {
+    std::cout << "Identification successful!\n";
+    std::cout << "Found matching identity on unit ID: " << identifyUnitId << "\n";
+    std::cout << "Identity type: " << identifyIdentity.Type << "\n";
+    if (identifyIdentity.Type == WINBIO_ID_TYPE_SID)
+    {
+      std::cout << "Identity: Windows user account (SID)\n";
+    }
+    else if (identifyIdentity.Type == WINBIO_ID_TYPE_GUID)
+    {
+      std::cout << "Identity: GUID\n";
+    }
+    else
+    {
+      std::cout << "Identity: Other type\n";
+    }
+    std::cout << "Sub-factor (finger position): " << (int)identifySubFactor << "\n";
+  }
+  else
+  {
+    if (hr == WINBIO_E_BAD_CAPTURE)
+      std::cout << "Bad capture during identification; reason: " << identifyRejectDetail << "\n";
+    else if (hr == WINBIO_E_NO_MATCH)
+      std::cout << "No matching enrolled fingerprint found (this is expected for new users).\n";
+    else
+      std::cout << "WinBioIdentify failed. hr = 0x" << std::hex << hr << std::dec << "\n";
+    
+    std::cout << "Identification failed or no match found. Proceeding with enrollment...\n";
+  }
 
   // Now try enrollment operations
   std::cout << "Starting enrollment process...\n";
@@ -346,6 +394,7 @@ HRESULT CaptureSample()
     if (hr == 0x8009801c) // WINBIO_E_DUPLICATE_ENROLLMENT
     {
       std::cout << "Fingerprint successfully recognized (already enrolled).\n";
+      std::cout << "Identity Type: " << identity.Type << "\n";
       return S_OK;
     }
     
