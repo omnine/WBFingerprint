@@ -387,6 +387,47 @@ HRESULT CaptureSample()
 
   std::cout << "Enrollment capture successful!\n";
 
+  // Commit the enrollment to get the template
+WINBIO_IDENTITY identity = {0};
+  BOOLEAN isNewTemplate = TRUE;
+  
+  // Initialize identity for anonymous enrollment
+//  identity.Type = WINBIO_ID_TYPE_WILDCARD;
+  
+  std::cout << "Committing enrollment...\n";
+  hr = WinBioEnrollCommit(
+    sessionHandle,
+    &identity,
+    &isNewTemplate
+    );
+
+  if(FAILED(hr))
+  {
+    std::cout << "WinBioEnrollCommit failed. hr = 0x" << std::hex << hr << std::dec << "\n";
+    
+    // Provide specific error message for duplicate enrollment
+    if (hr == 0x8009801c) // WINBIO_E_DUPLICATE_ENROLLMENT
+    {
+      std::cout << "Error: This fingerprint is already enrolled in the database.\n";
+      std::cout << "This means the sensor successfully recognized your fingerprint!\n";
+    }
+    
+    // Cancel enrollment on failure
+    WinBioEnrollDiscard(sessionHandle);
+
+    if(sessionHandle != NULL)
+    {
+      WinBioCloseSession(sessionHandle);
+      sessionHandle = NULL;
+    }
+
+    // Fall back to raw capture method
+    std::cout << "Falling back to raw capture method...\n";
+    goto TryRawCapture;
+  }
+
+  std::cout << "Enrollment committed successfully! New template: " << (isNewTemplate ? "Yes" : "No") << "\n";
+
   // Discard the enrollment (we don't want to actually save it)
   WinBioEnrollDiscard(sessionHandle);
 
