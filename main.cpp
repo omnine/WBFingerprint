@@ -5,6 +5,35 @@
 
 #include "headers.h"
 
+HRESULT CheckBiometricService()
+{
+  // Try to enumerate available biometric units to check if service is running
+  WINBIO_UNIT_SCHEMA* unitSchemaArray = NULL;
+  SIZE_T unitCount = 0;
+  
+  HRESULT hr = WinBioEnumBiometricUnits(
+    WINBIO_TYPE_FINGERPRINT,
+    &unitSchemaArray,
+    &unitCount
+  );
+  
+  if (SUCCEEDED(hr))
+  {
+    std::cout << "Found " << unitCount << " biometric unit(s)\n";
+    if (unitSchemaArray != NULL)
+    {
+      WinBioFree(unitSchemaArray);
+    }
+  }
+  else
+  {
+    std::cout << "WinBioEnumBiometricUnits failed. hr = 0x" << std::hex << hr << std::dec << "\n";
+    std::cout << "This may indicate the Windows Biometric Service is not running or no sensors are available.\n";
+  }
+  
+  return hr;
+}
+
 void BmpSetImageData(SBmpImage *bmp, const std::vector<uint8> &data, uint32 width, uint32 height)
 {
   bmp->data.resize(data.size());
@@ -103,34 +132,200 @@ HRESULT CaptureSample()
   PWINBIO_BIR sample = NULL;
   SIZE_T sampleSize = 0;
 
-  // Connect to the system pool. 
+  // First check if biometric service is available
+  std::cout << "Checking biometric service availability...\n";
+  hr = CheckBiometricService();
+  
+  if (FAILED(hr))
+  {
+    std::cout << "Biometric service check failed. Attempting to continue anyway...\n";
+  }
+
+  // First try the enrollment approach for modern sensors
+  std::cout << "Attempting fingerprint capture with WinBioEnrollCapture...\n";
+
+  // Connect to a private pool for enrollment (often works better than system pool)
   hr = WinBioOpenSession(
     WINBIO_TYPE_FINGERPRINT,    // Service provider
-    WINBIO_POOL_SYSTEM,         // Pool type
-    WINBIO_FLAG_RAW,            // Access: Capture raw data
+    WINBIO_POOL_PRIVATE,        // Pool type - use private instead of system
+    WINBIO_FLAG_BASIC,          // Access: Basic operations for enrollment
     NULL,                       // Array of biometric unit IDs
     0,                          // Count of biometric unit IDs
-    WINBIO_DB_DEFAULT,          // Default database
+    NULL,                       // Database ID (NULL for private pool)
     &sessionHandle              // [out] Session handle
     );
 
   if(FAILED(hr))
   {
-    std::cout << "WinBioOpenSession failed. hr = 0x" << std::hex << hr << std::dec << "\n";
-
-    if(sample != NULL)
+    std::cout << "WinBioOpenSession (enrollment) failed. hr = 0x" << std::hex << hr << std::dec << "\n";
+    
+    // Provide specific error messages for common error codes
+    switch(hr)
     {
-      WinBioFree(sample);
-      sample = NULL;
+      case E_INVALIDARG:
+        std::cout << "Error: Invalid argument (E_INVALIDARG). Check if Windows Biometric Service is running.\n";
+        break;
+      case E_ACCESSDENIED:
+        std::cout << "Error: Access denied. Try running as administrator.\n";
+        break;
+      case 0x80070422: // Service not running
+        std::cout << "Error: Windows Biometric Service is not running.\n";
+        break;
+      default:
+        std::cout << "Error: Unknown error occurred during session opening.\n";
+        break;
     }
+    
+    // Fall back to raw capture method
+    std::cout << "Falling back to raw capture method...\n";
+    goto TryRawCapture;
+  }
 
+  // Begin enrollment
+  hr = WinBioEnrollBegin(
+    sessionHandle,
+    WINBIO_FINGER_UNSPECIFIED_POS_01,  // Sub-factor (finger position)
+    unitId
+    );
+
+  if(FAILED(hr))
+  {
+    std::cout << "WinBioEnrollBegin failed. hr = 0x" << std::hex << hr << std::dec << "\n";
+    
     if(sessionHandle != NULL)
     {
       WinBioCloseSession(sessionHandle);
       sessionHandle = NULL;
     }
     
-    return hr;
+    // Fall back to raw capture method
+    std::cout << "Falling back to raw capture method...\n";
+    goto TryRawCapture;
+  }
+
+  // Capture enrollment sample
+  std::cout << "Swipe sensor for enrollment capture...\n";
+  hr = WinBioEnrollCapture(
+    sessionHandle,
+    &rejectDetail
+    );
+
+  if(FAILED(hr))
+  {
+    if(hr == WINBIO_E_BAD_CAPTURE)
+      std:: cout << "Bad capture; reason: " << rejectDetail << "\n";
+    else
+      std::cout << "WinBioEnrollCapture failed.hr = 0x" << std::hex << hr << std::dec << "\n";
+
+    // Cancel enrollment on failure
+    WinBioEnrollDiscard(sessionHandle);
+
+    if(sessionHandle != NULL)
+    {
+      WinBioCloseSession(sessionHandle);
+      sessionHandle = NULL;
+    }
+
+    // Fall back to raw capture method
+    std::cout << "Falling back to raw capture method...\n";
+    goto TryRawCapture;
+  }
+
+  std::cout << "Enrollment capture successful!\n";
+
+  // Discard the enrollment (we don't want to actually save it)
+  WinBioEnrollDiscard(sessionHandle);
+
+  if(sessionHandle != NULL)
+  {
+    WinBioCloseSession(sessionHandle);
+    sessionHandle = NULL;
+  }
+
+  // Try to get raw data by reopening with raw access
+  hr = WinBioOpenSession(
+    WINBIO_TYPE_FINGERPRINT,    // Service provider
+    WINBIO_POOL_PRIVATE,        // Pool type - use private pool
+    WINBIO_FLAG_RAW,            // Access: Raw data for image capture
+    NULL,                       // Array of biometric unit IDs
+    0,                          // Count of biometric unit IDs
+    NULL,                       // Database ID (NULL for private pool)
+    &sessionHandle              // [out] Session handle
+    );
+
+  if(SUCCEEDED(hr))
+  {
+    std::cout << "Attempting to capture raw image data...\n";
+    hr = WinBioCaptureSample(
+      sessionHandle,
+      WINBIO_NO_PURPOSE_AVAILABLE,
+      WINBIO_DATA_FLAG_RAW,
+      &unitId,
+      &sample,
+      &sampleSize,
+      &rejectDetail
+      );
+
+    if(SUCCEEDED(hr) && sample != NULL)
+    {
+      std::cout << "Raw capture successful! Processing image data...\n";
+      goto ProcessImageData;
+    }
+    else
+    {
+      std::cout << "Raw capture failed or not supported on this sensor.\n";
+    }
+  }
+
+  if(sessionHandle != NULL)
+  {
+    WinBioCloseSession(sessionHandle);
+    sessionHandle = NULL;
+  }
+
+  std::cout << "Fingerprint capture completed successfully (enrollment method).\n";
+  std::cout << "Note: This sensor does not provide raw image data.\n";
+  return S_OK;
+
+TryRawCapture:
+  // Original raw capture method as fallback
+  std::cout << "Trying original WinBioCaptureSample method...\n";
+
+  hr = WinBioOpenSession(
+    WINBIO_TYPE_FINGERPRINT,    // Service provider
+    WINBIO_POOL_PRIVATE,        // Pool type - use private pool
+    WINBIO_FLAG_RAW,            // Access: Capture raw data
+    NULL,                       // Array of biometric unit IDs
+    0,                          // Count of biometric unit IDs
+    NULL,                       // Database ID (NULL for private pool)
+    &sessionHandle              // [out] Session handle
+    );
+
+  if(FAILED(hr))
+  {
+    std::cout << "WinBioOpenSession (raw private) failed. hr = 0x" << std::hex << hr << std::dec << "\n";
+    
+    // Try with system pool as last resort
+    std::cout << "Trying with system pool...\n";
+    hr = WinBioOpenSession(
+      WINBIO_TYPE_FINGERPRINT,    // Service provider
+      WINBIO_POOL_SYSTEM,         // Pool type
+      WINBIO_FLAG_RAW,            // Access: Capture raw data
+      NULL,                       // Array of biometric unit IDs
+      0,                          // Count of biometric unit IDs
+      WINBIO_DB_DEFAULT,          // Default database
+      &sessionHandle              // [out] Session handle
+      );
+      
+    if(FAILED(hr))
+    {
+      std::cout << "WinBioOpenSession (raw system) failed. hr = 0x" << std::hex << hr << std::dec << "\n";
+      std::cout << "All session opening methods failed. Please:\n";
+      std::cout << "1. Ensure you're running as administrator\n";
+      std::cout << "2. Check that Windows Biometric Service is running\n";
+      std::cout << "3. Verify that a fingerprint sensor is connected and recognized\n";
+      return hr;
+    }
   }
 
   // Capture a biometric sample.
@@ -168,6 +363,7 @@ HRESULT CaptureSample()
     return hr;
   }
 
+ProcessImageData:
   std::cout << "Swipe processed - Unit ID: " << unitId << "\n";
   std::cout << "Captured " << sampleSize << " bytes.\n";
 
@@ -217,6 +413,19 @@ HRESULT CaptureSample()
 
 int main()
 {
+  std::cout << "Windows Biometric Framework Fingerprint Capture Utility\n";
+  std::cout << "======================================================\n";
+  std::cout << "Note: This application requires administrator privileges and\n";
+  std::cout << "      the Windows Biometric Service to be running.\n\n";
+  
   CreateDirectoryA("data", NULL);
-  while(!FAILED(CaptureSample()));
+  
+  while(!FAILED(CaptureSample()))
+  {
+    std::cout << "\nPress any key to capture another sample, or Ctrl+C to exit...\n";
+    std::cin.get();
+  }
+  
+  std::cout << "\nApplication ended due to error or user termination.\n";
+  return 0;
 }
