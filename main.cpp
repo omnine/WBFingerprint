@@ -312,8 +312,12 @@ HRESULT CaptureSample()
     
     if(FAILED(hr))
     {
-      std::cout << "All basic session attempts failed. Trying raw capture method...\n";
-      goto TryRawCapture;
+      std::cout << "All basic session attempts failed.\n";
+      std::cout << "Please ensure:\n";
+      std::cout << "1. You're running as administrator\n";
+      std::cout << "2. Windows Biometric Service is running\n";
+      std::cout << "3. Fingerprint sensor is connected and recognized\n";
+      return hr;
     }
   }
 
@@ -327,7 +331,13 @@ HRESULT CaptureSample()
     if (FAILED(hr))
     {
         std::cout << "WinBioLocateSensor failed. hr = 0x" << std::hex << hr << std::dec << "\n";
-        goto TryRawCapture;
+        
+        if(sessionHandle != NULL)
+        {
+          WinBioCloseSession(sessionHandle);
+          sessionHandle = NULL;
+        }
+        return hr;
     }
 
 
@@ -351,9 +361,8 @@ HRESULT CaptureSample()
       sessionHandle = NULL;
     }
     
-    // Fall back to raw capture method
-    std::cout << "Falling back to raw capture method...\n";
-    goto TryRawCapture;
+    std::cout << "Enrollment begin failed. Cannot proceed without enrollment capability.\n";
+    return hr;
   }
 
   std::cout << "Enrollment begun successfully. Please place finger on sensor...\n";
@@ -380,9 +389,8 @@ HRESULT CaptureSample()
       sessionHandle = NULL;
     }
 
-    // Fall back to raw capture method
-    std::cout << "Falling back to raw capture method...\n";
-    goto TryRawCapture;
+    std::cout << "Enrollment capture failed. Cannot proceed.\n";
+    return hr;
   }
 
   std::cout << "Enrollment capture successful!\n";
@@ -421,9 +429,15 @@ WINBIO_IDENTITY identity = {0};
       sessionHandle = NULL;
     }
 
-    // Fall back to raw capture method
-    std::cout << "Falling back to raw capture method...\n";
-    goto TryRawCapture;
+    // For duplicate enrollment, consider this a success since it means recognition worked
+    if (hr == 0x8009801c) // WINBIO_E_DUPLICATE_ENROLLMENT
+    {
+      std::cout << "Fingerprint successfully recognized (already enrolled).\n";
+      return S_OK;
+    }
+    
+    std::cout << "Enrollment commit failed. Cannot proceed.\n";
+    return hr;
   }
 
   std::cout << "Enrollment committed successfully! New template: " << (isNewTemplate ? "Yes" : "No") << "\n";
@@ -439,129 +453,6 @@ WINBIO_IDENTITY identity = {0};
 
   std::cout << "Fingerprint capture completed successfully using enrollment method.\n";
   return S_OK;
-
-TryRawCapture:
-  // Original raw capture method as fallback
-  std::cout << "Trying original WinBioCaptureSample method...\n";
-
-  hr = WinBioOpenSession(
-    WINBIO_TYPE_FINGERPRINT,    // Service provider
-    WINBIO_POOL_PRIVATE,        // Pool type - use private pool
-    WINBIO_FLAG_RAW,            // Access: Capture raw data
-    NULL,                       // Array of biometric unit IDs
-    0,                          // Count of biometric unit IDs
-    NULL,                       // Database ID (NULL for private pool)
-    &sessionHandle              // [out] Session handle
-    );
-
-  if(FAILED(hr))
-  {
-    std::cout << "WinBioOpenSession (raw private) failed. hr = 0x" << std::hex << hr << std::dec << "\n";
-    
-    // Try with system pool as last resort
-    std::cout << "Trying with system pool...\n";
-    hr = WinBioOpenSession(
-      WINBIO_TYPE_FINGERPRINT,    // Service provider
-      WINBIO_POOL_SYSTEM,         // Pool type
-      WINBIO_FLAG_RAW,            // Access: Capture raw data
-      NULL,                       // Array of biometric unit IDs
-      0,                          // Count of biometric unit IDs
-      WINBIO_DB_DEFAULT,          // Default database
-      &sessionHandle              // [out] Session handle
-      );
-      
-    if(FAILED(hr))
-    {
-      std::cout << "WinBioOpenSession (raw system) failed. hr = 0x" << std::hex << hr << std::dec << "\n";
-      std::cout << "All session opening methods failed. Please:\n";
-      std::cout << "1. Ensure you're running as administrator\n";
-      std::cout << "2. Check that Windows Biometric Service is running\n";
-      std::cout << "3. Verify that a fingerprint sensor is connected and recognized\n";
-      return hr;
-    }
-  }
-
-  // Capture a biometric sample.
-  std::cout << "Calling WinBioCaptureSample - Swipe sensor...\n";
-
-  hr = WinBioCaptureSample(
-    sessionHandle,
-    WINBIO_NO_PURPOSE_AVAILABLE,
-    WINBIO_DATA_FLAG_RAW,
-    &unitId,
-    &sample,
-    &sampleSize,
-    &rejectDetail
-    );
-
-  if(FAILED(hr))
-  {
-    if(hr == WINBIO_E_BAD_CAPTURE)
-      std:: cout << "Bad capture; reason: " << rejectDetail << "\n";
-    else
-      std::cout << "WinBioCaptureSample failed.hr = 0x" << std::hex << hr << std::dec << "\n";
-
-    if(sample != NULL)
-    {
-      WinBioFree(sample);
-      sample = NULL;
-    }
-
-    if(sessionHandle != NULL)
-    {
-      WinBioCloseSession(sessionHandle);
-      sessionHandle = NULL;
-    }
-
-    return hr;
-  }
-
-ProcessImageData:
-  std::cout << "Swipe processed - Unit ID: " << unitId << "\n";
-  std::cout << "Captured " << sampleSize << " bytes.\n";
-
-  if(sample != NULL)
-  {
-    PWINBIO_BIR_HEADER BirHeader = (PWINBIO_BIR_HEADER)(((PBYTE)sample) + sample->HeaderBlock.Offset);
-    PWINBIO_BDB_ANSI_381_HEADER AnsiBdbHeader = (PWINBIO_BDB_ANSI_381_HEADER)(((PBYTE)sample) + sample->StandardDataBlock.Offset);
-    PWINBIO_BDB_ANSI_381_RECORD AnsiBdbRecord = (PWINBIO_BDB_ANSI_381_RECORD)(((PBYTE)AnsiBdbHeader) + sizeof(WINBIO_BDB_ANSI_381_HEADER));
-
-    DWORD width = AnsiBdbRecord->HorizontalLineLength; // Width of image in pixels
-    DWORD height = AnsiBdbRecord->VerticalLineLength; // Height of image in pixels
-
-    std::cout << "Image resolution: " << width << " x " << height << "\n";
-
-    PBYTE firstPixel = (PBYTE)((PBYTE)AnsiBdbRecord) + sizeof(WINBIO_BDB_ANSI_381_RECORD);
-
-    SBmpImage bmp;
-    std::vector<uint8> data(width * height);
-    memcpy(&data[0], firstPixel, width * height);
-
-    SYSTEMTIME st;
-    GetSystemTime(&st);
-    std::stringstream s;
-    s << st.wYear << "." << st.wMonth << "." << st.wDay << "." << st.wHour << "." << st.wMinute << "." << st.wSecond << "." << st.wMilliseconds;
-    std::string bmpFile = "data/fingerPrint_"+s.str()+".bmp";
-
-    BmpSetImageData(&bmp, data, width, height);
-    BmpSave(&bmp, bmpFile);
-    //ShellExecuteA(NULL, NULL, bmpFile.c_str(), NULL, NULL, SW_SHOWNORMAL);
-
-    CFile raw("rawData.bin");
-    raw.write(&data[0], data.size());
-    raw.close();
-
-    WinBioFree(sample);
-    sample = NULL;
-  }
-
-  if(sessionHandle != NULL)
-  {
-    WinBioCloseSession(sessionHandle);
-    sessionHandle = NULL;
-  }
-
-  return hr;
 }
 
 int main()
