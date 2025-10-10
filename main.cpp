@@ -4,6 +4,7 @@
  */
 
 #include "headers.h"
+#include "BioHelper.h"
 
 // Simple function to test basic biometric functionality
 HRESULT TestBasicBiometric()
@@ -348,7 +349,7 @@ HRESULT CaptureSample()
   // Begin enrollment
   hr = WinBioEnrollBegin(
     sessionHandle,
-    WINBIO_ANSI_381_POS_RH_INDEX_FINGER,  // Sub-factor (finger position)
+    WINBIO_FINGER_UNSPECIFIED_POS_01,  // Sub-factor (finger position)
     unitId
     );
 
@@ -454,7 +455,7 @@ HRESULT CaptureSample()
   hr = WinBioVerify(
     sessionHandle,
     &identity,
-    WINBIO_ANSI_381_POS_RH_INDEX_FINGER,
+    WINBIO_FINGER_UNSPECIFIED_POS_01,
     &verifyUnitId,
     &match,
     &verifyRejectDetail
@@ -496,6 +497,280 @@ HRESULT CaptureSample()
   return S_OK;
 }
 
+// Check if private pool database is already installed
+bool IsPrivatePoolDatabaseInstalled()
+{
+  WINBIO_STORAGE_SCHEMA *storageArray = NULL;
+  SIZE_T storageCount = 0;
+  bool found = false;
+  
+  HRESULT hr = WinBioEnumDatabases( WINBIO_TYPE_FINGERPRINT, &storageArray, &storageCount );
+  if (SUCCEEDED(hr))
+  {
+    for (SIZE_T i = 0; i < storageCount; ++i)
+    {
+      if (storageArray[i].DatabaseId == PRIVATE_POOL_DATABASE_ID)
+      {
+        found = true;
+        break;
+      }
+    }
+    WinBioFree(storageArray);
+  }
+  
+  return found;
+}
+
+// Setup private pool by installing database and configuring sensor
+HRESULT SetupPrivatePool()
+{
+  std::cout << "\n=== Setting up Private Pool ===\n";
+  
+  // Check if already installed
+  if (IsPrivatePoolDatabaseInstalled())
+  {
+    std::cout << "Private database already installed. Skipping setup.\n";
+    return S_OK;
+  }
+  
+  // Enumerate available sensors
+  WINBIO_UNIT_SCHEMA *unitArray = NULL;
+  SIZE_T unitCount = 0;
+  HRESULT hr = WinBioEnumBiometricUnits( 
+                  WINBIO_TYPE_FINGERPRINT, 
+                  &unitArray, 
+                  &unitCount 
+                  );
+  if (FAILED(hr))
+  {
+    std::cout << "Failed to enumerate biometric units. hr = 0x" << std::hex << hr << std::dec << "\n";
+    return hr;
+  }
+  
+  if (unitCount == 0)
+  {
+    std::cout << "No biometric units found.\n";
+    WinBioFree(unitArray);
+    return E_FAIL;
+  }
+  
+  std::cout << "Found " << unitCount << " biometric unit(s). Using the first one for private pool setup.\n";
+  
+  // Use the first available sensor for setup
+  WINBIO_UNIT_SCHEMA* selectedUnit = &unitArray[0];
+  
+  // Create compatible configuration from the selected sensor
+  BioHelper::POOL_CONFIGURATION derivedConfig = {};
+  hr = BioHelper::CreateCompatibleConfiguration(selectedUnit, &derivedConfig);
+  
+  if (SUCCEEDED(hr))
+  {
+    // Register the private database
+    WINBIO_STORAGE_SCHEMA storageSchema = {};
+    storageSchema.DatabaseId = PRIVATE_POOL_DATABASE_ID;
+    storageSchema.DataFormat = derivedConfig.DataFormat;
+    storageSchema.Attributes = derivedConfig.DatabaseAttributes;
+    
+    std::cout << "Registering private database...\n";
+    hr = BioHelper::RegisterDatabase(&storageSchema);
+    
+    if (SUCCEEDED(hr))
+    {
+      // Configure the sensor for the private pool
+      std::cout << "Configuring sensor for private pool...\n";
+      derivedConfig.DatabaseId = PRIVATE_POOL_DATABASE_ID;
+      hr = BioHelper::RegisterPrivateConfiguration(selectedUnit, &derivedConfig);
+      
+      if (SUCCEEDED(hr))
+      {
+        std::cout << "Private pool setup completed successfully!\n";
+        std::cout << "Sensor: " << selectedUnit->Description << " (" << selectedUnit->Manufacturer << ")\n";
+      }
+      else
+      {
+        std::cout << "Failed to register private configuration. hr = 0x" << std::hex << hr << std::dec << "\n";
+        
+        // Clean up database if sensor config failed
+        BioHelper::UnregisterDatabase((WINBIO_UUID*)&PRIVATE_POOL_DATABASE_ID);
+      }
+    }
+    else
+    {
+      std::cout << "Failed to register private database. hr = 0x" << std::hex << hr << std::dec << "\n";
+    }
+  }
+  else
+  {
+    std::cout << "Failed to create compatible configuration. hr = 0x" << std::hex << hr << std::dec << "\n";
+  }
+  
+  WinBioFree(unitArray);
+  return hr;
+}
+
+// Clean up private pool by removing sensor configurations and database
+HRESULT CleanupPrivatePool()
+{
+  std::cout << "\n=== Cleaning up Private Pool ===\n";
+  
+  // Check if database is installed
+  if (!IsPrivatePoolDatabaseInstalled())
+  {
+    std::cout << "Private database not found. Nothing to clean up.\n";
+    return S_OK;
+  }
+  
+  // Enumerate all sensors and remove private configurations
+  WINBIO_UNIT_SCHEMA *unitArray = NULL;
+  SIZE_T unitCount = 0;
+  HRESULT hr = WinBioEnumBiometricUnits( 
+                  WINBIO_TYPE_FINGERPRINT, 
+                  &unitArray, 
+                  &unitCount 
+                  );
+  if (SUCCEEDED(hr))
+  {
+    for (SIZE_T i = 0; i < unitCount; ++i)
+    {
+      bool configRemoved = false;
+      HRESULT removeHr = BioHelper::UnregisterPrivateConfiguration( 
+                              &unitArray[i], 
+                              (WINBIO_UUID*)&PRIVATE_POOL_DATABASE_ID, 
+                              &configRemoved 
+                              );
+      if (SUCCEEDED(removeHr) && configRemoved)
+      {
+        std::cout << "Removed sensor from private pool: " << unitArray[i].Description << "\n";
+      }
+    }
+    WinBioFree(unitArray);
+  }
+  
+  // Remove the database
+  std::cout << "Removing private database...\n";
+  hr = BioHelper::UnregisterDatabase((WINBIO_UUID*)&PRIVATE_POOL_DATABASE_ID);
+  
+  if (SUCCEEDED(hr))
+  {
+    std::cout << "Private pool cleanup completed successfully!\n";
+  }
+  else
+  {
+    std::cout << "Failed to remove private database. hr = 0x" << std::hex << hr << std::dec << "\n";
+  }
+  
+  return hr;
+}
+
+// Test private pool functionality
+HRESULT TestPrivatePool()
+{
+  std::cout << "\n=== Testing Private Pool ===\n";
+  
+  // Check if private pool is set up
+  if (!IsPrivatePoolDatabaseInstalled())
+  {
+    std::cout << "Private pool database not found. Setting up...\n";
+    HRESULT setupHr = SetupPrivatePool();
+    if (FAILED(setupHr))
+    {
+      std::cout << "Failed to setup private pool. Cannot proceed with test.\n";
+      return setupHr;
+    }
+  }
+  
+  HRESULT hr = S_OK;
+  WINBIO_SESSION_HANDLE sessionHandle = NULL;
+  
+  std::cout << "Opening private pool session...\n";
+  
+  // Open session with private pool
+  hr = WinBioOpenSession(
+    WINBIO_TYPE_FINGERPRINT,
+    WINBIO_POOL_PRIVATE,
+    WINBIO_FLAG_DEFAULT,
+    NULL,
+    0,
+    (WINBIO_UUID*)&PRIVATE_POOL_DATABASE_ID,
+    &sessionHandle
+    );
+
+  if (FAILED(hr))
+  {
+    std::cout << "Failed to open private pool session. hr = 0x" << std::hex << hr << std::dec << "\n";
+    std::cout << "This may indicate:\n";
+    std::cout << "1. Private pool setup is incomplete\n";
+    std::cout << "2. Windows Biometric Service needs to be restarted\n";
+    std::cout << "3. Insufficient privileges (run as administrator)\n";
+    return hr;
+  }
+
+  std::cout << "Private pool session opened successfully!\n";
+  std::cout << "This confirms that WINBIO_POOL_PRIVATE is working correctly.\n";
+  
+  // Test basic private pool functionality
+  WINBIO_UNIT_ID unitId = 0;
+  std::cout << "Testing sensor location in private pool...\n";
+  std::cout << "Please touch your fingerprint sensor...\n";
+  
+  hr = WinBioLocateSensor(sessionHandle, &unitId);
+  if (SUCCEEDED(hr))
+  {
+    std::cout << "Sensor located successfully in private pool! Unit ID: " << unitId << "\n";
+    
+    // Try a simple enrollment operation to verify the private pool works
+    std::cout << "Testing enrollment capability in private pool...\n";
+    std::cout << "Please place finger on sensor for enrollment test...\n";
+    
+    hr = WinBioEnrollBegin(
+      sessionHandle,
+      WINBIO_FINGER_UNSPECIFIED_POS_01,
+      unitId
+      );
+      
+    if (SUCCEEDED(hr))
+    {
+      std::cout << "Enrollment begin successful in private pool!\n";
+      
+      WINBIO_REJECT_DETAIL rejectDetail = 0;
+      hr = WinBioEnrollCapture(sessionHandle, &rejectDetail);
+      
+      if (SUCCEEDED(hr))
+      {
+        std::cout << "Enrollment capture successful in private pool!\n";
+        std::cout << "Private pool is fully functional for biometric operations.\n";
+      }
+      else
+      {
+        if (hr == WINBIO_E_BAD_CAPTURE)
+          std::cout << "Bad capture in private pool; reason: " << rejectDetail << "\n";
+        else
+          std::cout << "Enrollment capture failed in private pool. hr = 0x" << std::hex << hr << std::dec << "\n";
+      }
+      
+      // Discard the enrollment (we don't want to save test data)
+      WinBioEnrollDiscard(sessionHandle);
+    }
+    else
+    {
+      std::cout << "Enrollment begin failed in private pool. hr = 0x" << std::hex << hr << std::dec << "\n";
+    }
+  }
+  else
+  {
+    std::cout << "Failed to locate sensor in private pool. hr = 0x" << std::hex << hr << std::dec << "\n";
+  }
+
+  if (sessionHandle != NULL)
+  {
+    WinBioCloseSession(sessionHandle);
+    sessionHandle = NULL;
+  }
+
+  std::cout << "Private pool test completed.\n";
+  return S_OK;
+}
+
 int main()
 {
   std::cout << "Windows Biometric Framework Fingerprint Capture Utility\n";
@@ -522,19 +797,58 @@ int main()
     std::cout << "Press any key to continue anyway...\n";
     std::cin.get();
   }
-  else
-  {
-    std::cout << "\nStep 2: Proceeding with fingerprint capture...\n";
-  }
   
   CreateDirectoryA("data", NULL);
   
-  while(!FAILED(CaptureSample()))
+  // Main menu loop
+  while (true)
   {
-    std::cout << "\nPress any key to capture another sample, or Ctrl+C to exit...\n";
-    std::cin.get();
+    std::cout << "\n========================================\n";
+    std::cout << "Windows Biometric Framework Test Menu\n";
+    std::cout << "========================================\n";
+    std::cout << "1. Test System Pool (WINBIO_POOL_SYSTEM)\n";
+    std::cout << "2. Test Private Pool (WINBIO_POOL_PRIVATE)\n";
+    std::cout << "3. Setup Private Pool\n";
+    std::cout << "4. Cleanup Private Pool\n";
+    std::cout << "5. Exit\n";
+    std::cout << "Choose an option (1-5): ";
+    
+    std::string choice;
+    std::getline(std::cin, choice);
+    
+    if (choice == "1")
+    {
+      std::cout << "\n--- Testing System Pool ---\n";
+      CaptureSample();
+    }
+    else if (choice == "2")
+    {
+      TestPrivatePool();
+    }
+    else if (choice == "3")
+    {
+      SetupPrivatePool();
+    }
+    else if (choice == "4")
+    {
+      CleanupPrivatePool();
+    }
+    else if (choice == "5")
+    {
+      break;
+    }
+    else
+    {
+      std::cout << "Invalid choice. Please enter 1-5.\n";
+    }
+    
+    if (choice != "5")
+    {
+      std::cout << "\nPress Enter to return to menu...";
+      std::cin.get();
+    }
   }
   
-  std::cout << "\nApplication ended due to error or user termination.\n";
+  std::cout << "\nThank you for using the Windows Biometric Framework Test Utility!\n";
   return 0;
 }

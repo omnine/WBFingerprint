@@ -14,6 +14,13 @@
 #include <cstdint>
 #include <windows.h>
 #include <winbio.h>
+#include <tchar.h>
+
+// Private Pool Database GUID - DO NOT USE THIS GUID VALUE FOR A REAL APPLICATION!
+// GENERATE YOUR OWN UNIQUE GUID AND REPLACE THE FOLLOWING DEFINITION!
+// {5086745D-B3F9-4da7-859E-9CC4331CE47C}
+static const GUID PRIVATE_POOL_DATABASE_ID = 
+{ 0x5086745d, 0xb3f9, 0x4da7, { 0x85, 0x9e, 0x9c, 0xc4, 0x33, 0x1c, 0xe4, 0x7c } };
 
 typedef          int8_t    int8;
 typedef          uint8_t   uint8;
