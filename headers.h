@@ -11,6 +11,7 @@
 #include <sstream>
 #include <vector>
 #include <string>
+#include <algorithm>
 #include <cstdint>
 #include <windows.h>
 #include <winbio.h>
